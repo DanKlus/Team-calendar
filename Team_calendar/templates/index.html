@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calendar</title>
+    <link href='https://cdn.jsdelivr.net/npm/fullcalendar@5.11.2/main.min.css' rel='stylesheet' />
+    <script src='https://cdn.jsdelivr.net/npm/fullcalendar@5.11.2/main.min.js'></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+        #calendar {
+            max-width: 1100px;
+            margin: 40px auto;
+            padding: 0 10px;
+        }
+        .context-menu {
+            position: absolute;
+            z-index: 1000;
+            display: none;
+            background-color: #ffffff;
+            border: 1px solid #ccc;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+        }
+        .context-menu-item {
+            padding: 8px 12px;
+            cursor: pointer;
+        }
+        .context-menu-item:hover {
+            background-color: #f5f5f5;
+        }
+    </style>
+</head>
+<body>
+    <div id='calendar'></div>
+
+    <!-- Modal for adding/editing events -->
+    <div class="modal fade" id="eventModal" tabindex="-1" role="dialog" aria-labelledby="exampleModalLabel" aria-hidden="true">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="exampleModalLabel">Add/Edit Event</h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="nameInput">Name</label>
+                        <input type="text" class="form-control" id="nameInput" placeholder="Enter name">
+                    </div>
+                    <div class="form-group">
+                        <label for="statusSelect">Status</label>
+                        <select id="statusSelect" class="form-control">
+                            <option value="stationary">Stationary</option>
+                            <option value="remote">Remote</option>
+                            <option value="absent">Absent</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" id="saveStatus">Save changes</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Context menu -->
+    <div id="contextMenu" class="context-menu">
+        <div class="context-menu-item" id="editEvent">Edit</div>
+        <div class="context-menu-item" id="deleteEvent">Delete</div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            var calendarEl = document.getElementById('calendar');
+            var calendar = new FullCalendar.Calendar(calendarEl, {
+                initialView: 'dayGridMonth',
+                headerToolbar: {
+                    left: 'prev,next today',
+                    center: 'title',
+                    right: 'dayGridWeek,dayGridMonth'
+                },
+                views: {
+                    dayGridWeek: {
+                        weekends: false,
+                        dayHeaderContent: function(arg) {
+                            var date = arg.date;
+                            var dayNumber = date.getDate();
+                            var dayName = date.toLocaleDateString('en-US', { weekday: 'short' });
+                            return dayNumber + ' - ' + dayName; // Show day number and name
+                        }
+                    }
+                },
+                events: [],
+                dateClick: function(info) {
+                    $('#eventModal').data('date', info.dateStr).data('id', null).modal('show');
+                },
+                eventDidMount: function(info) {
+                    info.el.addEventListener('contextmenu', function(event) {
+                        event.preventDefault();
+                        showContextMenu(event, info.event);
+                    });
+                }
+            });
+            calendar.render();
+
+            // Fetch existing events from the server
+            $.ajax({
+                url: '/get_events',
+                type: 'GET',
+                success: function(events) {
+                    events.forEach(function(event) {
+                        calendar.addEvent(event);
+                    });
+                },
+                error: function(error) {
+                    console.log('Error fetching events:', error);
+                }
+            });
+
+            $('#saveStatus').on('click', function() {
+                var selectedDate = $('#eventModal').data('date');
+                var eventId = $('#eventModal').data('id');
+                var name = $('#nameInput').val();
+                var status = $('#statusSelect').val();
+                var eventData = {
+                    title: name + ' - ' + status.charAt(0).toUpperCase() + status.slice(1),
+                    start: selectedDate,
+                    allDay: true,
+                    backgroundColor: status === 'stationary' ? 'blue' : status === 'remote' ? 'green' : 'red',
+                    borderColor: status === 'stationary' ? 'blue' : status === 'remote' ? 'green' : 'red',
+                    name: name,
+                    status: status
+                };
+
+                if (eventId) {
+                    eventData.id = eventId;
+                    // Update existing event
+                    $.ajax({
+                        url: '/update_event',
+                        type: 'POST',
+                        contentType: 'application/json',
+                        data: JSON.stringify(eventData),
+                        success: function(response) {
+                            console.log('Event updated:', response);
+                            calendar.getEventById(eventId).remove();
+                            calendar.addEvent(eventData);
+                        },
+                        error: function(error) {
+                            console.log('Error updating event:', error);
+                        }
+                    });
+                } else {
+                    // Add new event
+                    $.ajax({
+                        url: '/save_event',
+                        type: 'POST',
+                        contentType: 'application/json',
+                        data: JSON.stringify(eventData),
+                        success: function(response) {
+                            console.log('Event saved:', response);
+                            calendar.addEvent(response.event);
+                        },
+                        error: function(error) {
+                            console.log('Error saving event:', error);
+                        }
+                    });
+                }
+
+                $('#eventModal').modal('hide');
+            });
+
+            $('#deleteEvent').on('click', function() {
+                var eventId = $(this).data('id');
+                // Delete event
+                $.ajax({
+                    url: '/delete_event',
+                    type: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({ id: eventId }),
+                    success: function(response) {
+                        console.log('Event deleted:', response);
+                        calendar.getEventById(eventId).remove();
+                    },
+                    error: function(error) {
+                        console.log('Error deleting event:', error);
+                    }
+                });
+
+                $('#contextMenu').hide();
+            });
+
+            $('#editEvent').on('click', function() {
+                var eventId = $(this).data('id');
+                var event = calendar.getEventById(eventId);
+                $('#nameInput').val(event.extendedProps.name);
+                $('#statusSelect').val(event.extendedProps.status);
+                $('#eventModal').data('date', event.startStr).data('id', eventId).modal('show');
+                $('#contextMenu').hide();
+            });
+
+            $(document).on('click', function() {
+                $('#contextMenu').hide();
+            });
+
+            function showContextMenu(event, calendarEvent) {
+                $('#contextMenu').css({
+                    top: event.pageY + 'px',
+                    left: event.pageX + 'px'
+                }).show();
+
+                $('#editEvent').data('id', calendarEvent.id);
+                $('#deleteEvent').data('id', calendarEvent.id);
+            }
+        });
+    </script>
+</body>
+</html>
